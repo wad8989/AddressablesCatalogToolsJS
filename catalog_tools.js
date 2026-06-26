@@ -33,7 +33,7 @@ function getBundleHash(str) {
   return m ? m[1].toLowerCase() : null;
 }
 
-// ── Reader ────────────────────────────────────────────────────────────────────
+// -- Reader --------------------------------------------------------------------
 
 class CatalogReader {
   constructor(buf) {
@@ -124,7 +124,7 @@ class CatalogReader {
   }
 }
 
-// ── SerializedType ────────────────────────────────────────────────────────────
+// -- SerializedType ------------------------------------------------------------
 
 function readSerializedType(reader, offset) {
   if (offset === UINT_MAX || offset === UINT_MAX_1) return null;
@@ -139,7 +139,7 @@ function readSerializedType(reader, offset) {
   });
 }
 
-// ── decode_v2 (key decoder) ───────────────────────────────────────────────────
+// -- decode_v2 (key decoder) ---------------------------------------------------
 
 function decodeV2(reader, offset) {
   if (offset === UINT_MAX || offset === UINT_MAX_1) return null;
@@ -173,7 +173,7 @@ function decodeV2(reader, offset) {
   });
 }
 
-// ── ResourceLocation ──────────────────────────────────────────────────────────
+// -- ResourceLocation ----------------------------------------------------------
 
 function readResourceLocation(reader, offset) {
   if (offset === UINT_MAX || offset === UINT_MAX_1) return null;
@@ -199,7 +199,7 @@ function readResourceLocation(reader, offset) {
   });
 }
 
-// ── Main parse ────────────────────────────────────────────────────────────────
+// -- Main parse ----------------------------------------------------------------
 
 function parseSingle(buf, allBundlesSet, bundleAssets, assetToBundle) {
   const reader = new CatalogReader(buf);
@@ -267,28 +267,12 @@ function parse(mainBuf) {
 
   parseSingle(mainBuf, allBundlesSet, bundleAssets, assetToBundle);
 
-  // Convert Sets to sorted arrays
-  const bundles = {};
-  for (const [hash, set] of Object.entries(bundleAssets)) {
-    bundles[hash] = [...set].sort();
-  }
+  const bundles = [...allBundlesSet].sort();
+  const assets  = Object.fromEntries(
+    Object.entries(assetToBundle).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+  );
 
-  const looseBundles = [...allBundlesSet]
-    .filter(h => !bundles[h] || bundles[h].length === 0)
-    .sort();
-
-  const result = {
-    bundles,
-    looseBundles,
-    assetToBundle,
-    stats: {
-      totalBundles:  allBundlesSet.size,
-      mappedBundles: Object.values(bundles).filter(a => a.length > 0).length,
-      looseBundles:  looseBundles.length,
-      mappedAssets:  Object.keys(assetToBundle).length,
-    },
-  };
-
+  const result = { bundles, assets };
   root.__catalog = result;
   return result;
 }

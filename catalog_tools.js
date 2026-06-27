@@ -27,10 +27,16 @@ const TYPE_INT64   = 'mscorlib; System.Int64';
 const TYPE_BOOL    = 'mscorlib; System.Boolean';
 const TYPE_HASH128 = 'UnityEngine.CoreModule; UnityEngine.Hash128';
 
-function getBundleHash(str) {
-  if (typeof str !== 'string') return null;
-  const m = str.match(/^([0-9a-f]{32})(\.bundle)?$/i);
-  return m ? m[1].toLowerCase() : null;
+function getBundleInfo(str) {
+  if (typeof str !== 'string' || !str.toLowerCase().endsWith('.bundle'))
+    return null;
+
+  const m = str.match(/([0-9a-f]{32})(?=\.bundle$)/i);
+
+  return {
+    name: str,
+    hash: m ? m[1].toLowerCase() : null
+  };
 }
 
 // -- Reader --------------------------------------------------------------------
@@ -201,7 +207,7 @@ function readResourceLocation(reader, offset) {
 
 // -- Main parse ----------------------------------------------------------------
 
-function parseSingle(buf, allBundlesSet, bundleAssets, assetToBundle) {
+function parseSingle(buf, allBundles, bundleAssets, assetToBundle, bundleHashes) {
   const reader = new CatalogReader(buf);
 
   reader.readInt32();  // magic
@@ -211,11 +217,14 @@ function parseSingle(buf, allBundlesSet, bundleAssets, assetToBundle) {
 
   const keyLocPairs = reader.readOffsetArray(keysOffset);
 
-  function addAsset(hash, name) {
+  function addAsset(bundleName, name) {
     if (!name || assetToBundle[name]) return;
-    if (!bundleAssets[hash]) bundleAssets[hash] = new Set();
-    bundleAssets[hash].add(name);
-    assetToBundle[name] = hash;
+
+    if (!bundleAssets[bundleName])
+        bundleAssets[bundleName] = new Set();
+
+      bundleAssets[bundleName].add(name);
+      assetToBundle[name] = bundleName;
   }
 
   for (let i = 0; i + 1 < keyLocPairs.length; i += 2) {
@@ -227,20 +236,32 @@ function parseSingle(buf, allBundlesSet, bundleAssets, assetToBundle) {
       if (!loc) continue;
 
       // Bundle entry: primaryKey = "32hex.bundle"
-      const selfHash = getBundleHash(loc.primaryKey);
-      if (selfHash) {
-        allBundlesSet.add(selfHash);
-        if (!bundleAssets[selfHash]) bundleAssets[selfHash] = new Set();
-        continue;
+      const selfBundle = getBundleInfo(loc.primaryKey);
+
+      if (selfBundle) {
+          allBundles.add(selfBundle.name);
+
+          bundleHashes[selfBundle.name] = selfBundle.hash;
+
+          if (!bundleAssets[selfBundle.name])
+              bundleAssets[selfBundle.name] = new Set();
+
+          continue;
       }
 
       // Asset entry: has a bundle in its dependency list
       for (const dep of loc.dependencies) {
         if (!dep) continue;
-        const depHash = getBundleHash(dep.primaryKey);
-        if (!depHash) continue;
-        allBundlesSet.add(depHash);
-        if (!bundleAssets[depHash]) bundleAssets[depHash] = new Set();
+        const depBundle = getBundleInfo(dep.primaryKey);
+        if (!depBundle)
+            continue;
+
+        allBundles.add(depBundle.name);
+
+        bundleHashes[depBundle.name] = depBundle.hash;
+
+        if (!bundleAssets[depBundle.name])
+            bundleAssets[depBundle.name] = new Set();
 
         const sources = [];
         if (loc.internalId) sources.push(loc.internalId);
@@ -249,10 +270,10 @@ function parseSingle(buf, allBundlesSet, bundleAssets, assetToBundle) {
         for (const src of sources) {
           const filename = src.includes('/') ? src.split('/').pop() : src;
           if (!filename) continue;
-          addAsset(depHash, filename);
+          addAsset(depBundle.name, filename);
           // Also add bare name (no extension) so audio like "bgm_0060" resolves
           const bare = filename.replace(/\.[^.]+$/, '');
-          if (bare !== filename) addAsset(depHash, bare);
+          if (bare !== filename) addAsset(depBundle.name, bare);
         }
         break;
       }
@@ -261,18 +282,23 @@ function parseSingle(buf, allBundlesSet, bundleAssets, assetToBundle) {
 }
 
 function parse(mainBuf) {
-  const allBundlesSet = new Set();
-  const bundleAssets  = {};   // hash32 → Set of asset names
-  const assetToBundle = {};   // name → hash32
+  const allBundles = new Set();      // bundle names
+  const bundleAssets = {};           // bundleName -> Set(asset)
+  const assetToBundle = {};          // asset -> bundleName
+  const bundleHashes = {};           // bundleName -> hash|null
 
-  parseSingle(mainBuf, allBundlesSet, bundleAssets, assetToBundle);
+  parseSingle(mainBuf, allBundles, bundleAssets, assetToBundle, bundleHashes);
 
-  const bundles = [...allBundlesSet].sort();
+  const bundles = [...allBundles].sort();
   const assets  = Object.fromEntries(
     Object.entries(assetToBundle).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
   );
 
-  const result = { bundles, assets };
+  const result = {
+    bundles,
+    bundleHashes,
+    assets,
+  };
   root.__catalog = result;
   return result;
 }

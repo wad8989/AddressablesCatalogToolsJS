@@ -241,7 +241,9 @@ function parseSingle(buf, allBundles, bundleAssets, assetToBundle, bundleHashes)
       if (selfBundle) {
           allBundles.add(selfBundle.name);
 
-          bundleHashes[selfBundle.name] = selfBundle.hash;
+          if (selfBundle.hash) {
+            bundleHashes[selfBundle.hash] = selfBundle.name;
+          }
 
           if (!bundleAssets[selfBundle.name])
               bundleAssets[selfBundle.name] = new Set();
@@ -258,6 +260,9 @@ function parseSingle(buf, allBundles, bundleAssets, assetToBundle, bundleHashes)
 
         allBundles.add(depBundle.name);
 
+        if (depBundle.hash) {
+          bundleHashes[depBundle.hash] = depBundle.name;
+        }
         bundleHashes[depBundle.name] = depBundle.hash;
 
         if (!bundleAssets[depBundle.name])
@@ -285,7 +290,7 @@ function parse(mainBuf) {
   const allBundles = new Set();      // bundle names
   const bundleAssets = {};           // bundleName -> Set(asset)
   const assetToBundle = {};          // asset -> bundleName
-  const bundleHashes = {};           // bundleName -> hash|null
+  const bundleHashes = {};           // hash -> bundleName
 
   parseSingle(mainBuf, allBundles, bundleAssets, assetToBundle, bundleHashes);
 

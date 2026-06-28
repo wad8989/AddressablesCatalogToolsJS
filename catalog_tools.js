@@ -207,7 +207,15 @@ function readResourceLocation(reader, offset) {
 
 // -- Main parse ----------------------------------------------------------------
 
-function parseSingle(buf, allBundles, bundleAssets, assetToBundle, bundleHashes) {
+function parseSingle(buf, keyAliasFunc) {
+
+  const allBundles = new Set();      // bundle names
+  const bundleAssets = {};           // bundleName -> Set(asset)
+  const assetToBundle = {};          // asset -> bundleName
+  const bundleAliases = {};           // bundle alias (hash?) -> bundleName
+  const assetAliases = {};            // asset alias -> assetKey
+
+
   const reader = new CatalogReader(buf);
 
   reader.readInt32();  // magic
@@ -217,14 +225,20 @@ function parseSingle(buf, allBundles, bundleAssets, assetToBundle, bundleHashes)
 
   const keyLocPairs = reader.readOffsetArray(keysOffset);
 
-  function addAsset(bundleName, name) {
-    if (!name || assetToBundle[name]) return;
+  function addAsset(bundleName, assetKey) {
+    if (!assetKey || assetToBundle[assetKey]) return;
 
     if (!bundleAssets[bundleName])
         bundleAssets[bundleName] = new Set();
 
-      bundleAssets[bundleName].add(name);
-      assetToBundle[name] = bundleName;
+      bundleAssets[bundleName].add(assetKey);
+      assetToBundle[assetKey] = bundleName;
+
+      if (keyAliasFunc.asset) {
+        keyAliasFunc.asset({assetKey}).forEach(alias => {
+          assetAliases[alias] = assetKey;
+        });
+      }
   }
 
   for (let i = 0; i + 1 < keyLocPairs.length; i += 2) {
@@ -241,12 +255,14 @@ function parseSingle(buf, allBundles, bundleAssets, assetToBundle, bundleHashes)
       if (selfBundle) {
           allBundles.add(selfBundle.name);
 
-          if (selfBundle.hash) {
-            bundleHashes[selfBundle.hash] = selfBundle.name;
-          }
-
           if (!bundleAssets[selfBundle.name])
               bundleAssets[selfBundle.name] = new Set();
+
+          if (keyAliasFunc.bundle) {
+            keyAliasFunc.bundle(selfBundle).forEach(alias => {
+              bundleAliases[alias] = selfBundle.name;
+            });
+          }
 
           continue;
       }
@@ -260,39 +276,27 @@ function parseSingle(buf, allBundles, bundleAssets, assetToBundle, bundleHashes)
 
         allBundles.add(depBundle.name);
 
-        if (depBundle.hash) {
-          bundleHashes[depBundle.hash] = depBundle.name;
-        }
-        bundleHashes[depBundle.name] = depBundle.hash;
-
         if (!bundleAssets[depBundle.name])
             bundleAssets[depBundle.name] = new Set();
+
+        if (keyAliasFunc.bundle) {
+          keyAliasFunc.bundle(depBundle).forEach(alias => {
+            bundleAliases[alias] = depBundle.name;
+          });
+        }
 
         const sources = [];
         if (loc.internalId) sources.push(loc.internalId);
         if (typeof key === 'string') sources.push(key);
 
         for (const src of sources) {
-          const filename = src.includes('/') ? src.split('/').pop() : src;
-          if (!filename) continue;
-          addAsset(depBundle.name, filename);
-          // Also add bare name (no extension) so audio like "bgm_0060" resolves
-          const bare = filename.replace(/\.[^.]+$/, '');
-          if (bare !== filename) addAsset(depBundle.name, bare);
+          addAsset(depBundle.name, src);
         }
         break;
       }
     }
   }
-}
 
-function parse(mainBuf) {
-  const allBundles = new Set();      // bundle names
-  const bundleAssets = {};           // bundleName -> Set(asset)
-  const assetToBundle = {};          // asset -> bundleName
-  const bundleHashes = {};           // hash -> bundleName
-
-  parseSingle(mainBuf, allBundles, bundleAssets, assetToBundle, bundleHashes);
 
   const bundles = [...allBundles].sort();
   const assets  = Object.fromEntries(
@@ -301,9 +305,30 @@ function parse(mainBuf) {
 
   const result = {
     bundles,
-    bundleHashes,
+    bundleAliases,
     assets,
+    assetAliases,
   };
+  root.__catalog = result;
+  return result;
+}
+
+function parse(mainBuf, in_keyAliasFunc) {
+  const keyAliasesFunc = {
+    bundle: (bundleInfo) => {
+      if (bundleInfo.hash) {
+        return [bundleInfo.hash];
+      }
+      return [];
+    },
+    asset: (assetInfo) => {
+      return [];
+    }
+  };
+  Object.assign(keyAliasesFunc, in_keyAliasFunc);
+
+  const result = parseSingle(mainBuf, keyAliasesFunc);
+
   root.__catalog = result;
   return result;
 }

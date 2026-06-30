@@ -226,19 +226,23 @@ function parseSingle(buf, keyAliasFunc) {
   const keyLocPairs = reader.readOffsetArray(keysOffset);
 
   function addAsset(bundleName, assetKey) {
+    // A real bundle match always wins over a null (unmatched) placeholder,
+    // regardless of which one was recorded first.
     if (!assetKey || assetToBundle[assetKey]) return;
 
-    if (!bundleAssets[bundleName])
-        bundleAssets[bundleName] = new Set();
+    if (bundleName) {
+      if (!bundleAssets[bundleName])
+          bundleAssets[bundleName] = new Set();
 
       bundleAssets[bundleName].add(assetKey);
-      assetToBundle[assetKey] = bundleName;
+    }
+    assetToBundle[assetKey] = bundleName;
 
-      if (keyAliasFunc.asset) {
-        keyAliasFunc.asset({assetKey}).forEach(alias => {
-          assetAliases[alias] = assetKey;
-        });
-      }
+    if (keyAliasFunc.asset) {
+      keyAliasFunc.asset({assetKey}).forEach(alias => {
+        assetAliases[alias] = assetKey;
+      });
+    }
   }
 
   for (let i = 0; i + 1 < keyLocPairs.length; i += 2) {
@@ -268,12 +272,14 @@ function parseSingle(buf, keyAliasFunc) {
       }
 
       // Asset entry: has a bundle in its dependency list
+      let matchedBundle = false;
       for (const dep of loc.dependencies) {
         if (!dep) continue;
         const depBundle = getBundleInfo(dep.primaryKey);
         if (!depBundle)
             continue;
 
+        matchedBundle = true;
         allBundles.add(depBundle.name);
 
         if (!bundleAssets[depBundle.name])
@@ -293,6 +299,19 @@ function parseSingle(buf, keyAliasFunc) {
           addAsset(depBundle.name, src);
         }
         break;
+      }
+
+      // No dependency resolved to a bundle — keep the asset path in the
+      // result (bundle = null) instead of dropping it, so it can still be
+      // inspected/patched.
+      if (!matchedBundle) {
+        const sources = [];
+        if (loc.internalId) sources.push(loc.internalId);
+        if (typeof key === 'string') sources.push(key);
+
+        for (const src of sources) {
+          addAsset(null, src);
+        }
       }
     }
   }
